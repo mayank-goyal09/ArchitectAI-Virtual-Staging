@@ -1,0 +1,39 @@
+# Secrets and Env variables
+.env
+.env*
+*.env
+
+# Python caching & builds
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual Environments
+venv/
+env/
+.venv/
+
+# Large Model weights and Cache directories
+models/
+huggingface_cache/
+.cache/
+
+# User Data & Test Images
+data/
+*.jpg
+*.png
+*.jpeg
+temp_input.png
+staged_result.png
+final_staged_room.png
+
+# Editor specific files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
