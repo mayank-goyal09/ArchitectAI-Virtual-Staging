@@ -4,7 +4,7 @@ emoji: 🏡
 colorFrom: indigo
 colorTo: purple
 sdk: gradio
-sdk_version: 4.25.0
+sdk_version: 5.0.0
 app_file: app/gradio_app.py
 pinned: false
 license: mit
