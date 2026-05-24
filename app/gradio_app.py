@@ -1,51 +1,22 @@
 import os
 import cv2
-import torch
 import numpy as np
 import gradio as gr
 from PIL import Image
-from diffusers import StableDiffusionControlNetInpaintPipeline, ControlNetModel, DPMSolverMultistepScheduler
+from huggingface_hub import InferenceClient
+import io
 
-# === ZeroGPU Support ===
-try:
-    import spaces
-    ZERO_GPU = True
-    print("✨ ZeroGPU environment detected!")
-except ImportError:
-    ZERO_GPU = False
-    print("💻 Local environment detected.")
-    class spaces:
-        @staticmethod
-        def GPU(func):
-            return func
+# === HF Inference API Client ===
+# Uses HF's free serverless GPU infrastructure — no local GPU needed!
+HF_TOKEN = os.environ.get("HF_TOKEN", None)
+client = InferenceClient(token=HF_TOKEN)
 
-# === LOAD MODELS ON CPU (works everywhere) ===
-# Models are loaded in float16 on CPU. They get moved to GPU inside @spaces.GPU.
-print("📦 Loading ControlNet...")
-controlnet = ControlNetModel.from_pretrained(
-    "lllyasviel/sd-controlnet-canny",
-    torch_dtype=torch.float16
-)
-
-print("📦 Loading Stable Diffusion Pipeline...")
-pipe = StableDiffusionControlNetInpaintPipeline.from_pretrained(
-    "runwayml/stable-diffusion-v1-5",
-    controlnet=controlnet,
-    torch_dtype=torch.float16
-)
-pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
-pipe.enable_attention_slicing()
-
-# Only move to CUDA if a real GPU exists (not ZeroGPU — that happens inside @spaces.GPU)
-if not ZERO_GPU and torch.cuda.is_available():
-    pipe = pipe.to("cuda")
-    print("🚀 Moved pipeline to local GPU.")
-else:
-    print("✅ Models loaded on CPU. Will use GPU inside @spaces.GPU calls.")
+print("✅ Connected to Hugging Face Inference API!")
 
 
-# === IMAGE PROCESSING ===
+# === IMAGE PROCESSING (runs locally on CPU — lightweight) ===
 def get_canny_skeleton(pil_image):
+    """Extract structural edges from the room image."""
     img_np = np.array(pil_image)
     if len(img_np.shape) == 2:
         img_np = cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR)
@@ -60,65 +31,72 @@ def get_canny_skeleton(pil_image):
     return Image.fromarray(cv2.cvtColor(dilated, cv2.COLOR_GRAY2RGB))
 
 
-def create_floor_mask(shape):
-    h, w = shape[:2]
-    mask = np.zeros((h, w), dtype=np.uint8)
-    mask[int(h * 0.5):, :] = 255
-    return Image.fromarray(mask)
-
-
-# === INFERENCE (GPU requested here) ===
-@spaces.GPU
+# === INFERENCE VIA HF API ===
 def ai_interior_designer(input_img, custom_prompt, creativity_level, style_strength):
     if input_img is None:
-        raise gr.Error("Please upload an image first!")
+        raise gr.Error("Please upload an image of your empty room first!")
     if not custom_prompt or not custom_prompt.strip():
         raise gr.Error("Please describe your design vision!")
 
-    # Move pipeline to GPU at inference time (ZeroGPU gives us a real GPU here)
-    pipe.to("cuda" if torch.cuda.is_available() else "cpu")
-
+    # 1. Resize and extract structure
     original = input_img.convert("RGB").resize((512, 512))
     skeleton = get_canny_skeleton(original)
-    mask = create_floor_mask(np.array(original).shape)
-    prompt = f"{custom_prompt}, professional interior design, highly detailed, 8k, photorealistic"
 
-    print(f"🎨 Generating: '{prompt}'...")
-    result = pipe(
-        prompt=prompt,
-        image=original,
-        mask_image=mask,
-        control_image=skeleton,
-        num_inference_steps=25,
-        controlnet_conditioning_scale=style_strength,
-        strength=creativity_level,
-        guidance_scale=10.0
-    ).images[0]
+    # 2. Build the full prompt
+    full_prompt = f"{custom_prompt}, professional interior design, highly detailed, photorealistic, 8k"
 
-    print("✅ Done!")
-    return result, skeleton
+    print(f"🎨 Sending to HF API: '{full_prompt}'...")
+
+    # 3. Call HF Inference API — image-to-image using instruct-pix2pix
+    # This model takes an image + instruction and modifies it (perfect for staging!)
+    try:
+        result_image = client.image_to_image(
+            image=original,
+            prompt=full_prompt,
+            model="timbrooks/instruct-pix2pix",
+            guidance_scale=10.0,
+            image_guidance_scale=float(style_strength) * 2.5,
+        )
+        print("✅ Room design complete!")
+        return result_image, skeleton
+
+    except Exception as e:
+        error_msg = str(e)
+        print(f"❌ API Error: {error_msg}")
+
+        if "rate limit" in error_msg.lower() or "429" in error_msg:
+            raise gr.Error("⏳ Rate limit reached. Please wait 30 seconds and try again.")
+        elif "401" in error_msg or "token" in error_msg.lower():
+            raise gr.Error("🔑 HF Token needed. Add HF_TOKEN in Space Settings → Variables.")
+        else:
+            raise gr.Error(f"API Error: {error_msg}")
 
 
 # === GRADIO UI ===
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
     gr.Markdown("""
     # 🏗️ AI Virtual Interior Designer
-    Transform empty rooms into professionally staged spaces using Stable Diffusion + ControlNet.
+    Transform empty rooms into professionally staged spaces using AI.
+    
+    *Powered by Hugging Face Inference API — no GPU required!*
     """)
+
     with gr.Row():
         with gr.Column(scale=1):
             input_img = gr.Image(type="pil", label="Upload Your Empty Room")
             prompt = gr.Textbox(
-                placeholder="e.g., A minimalist Scandinavian living room with light wood furniture",
-                label="Describe Your Vision"
+                placeholder="e.g., Add modern Scandinavian furniture with light wood and plants",
+                label="Describe Your Vision",
+                value="Add modern minimalist furniture, warm lighting, indoor plants"
             )
             with gr.Accordion("Advanced Settings", open=False):
-                creativity = gr.Slider(0.1, 1.0, value=0.8, label="Creativity")
-                strictness = gr.Slider(0.1, 1.0, value=0.6, label="Structural Strictness")
+                creativity = gr.Slider(0.1, 1.0, value=0.8, label="Creativity Level")
+                strictness = gr.Slider(0.1, 1.0, value=0.6, label="Style Strength")
             btn = gr.Button("🎨 Design My Room", variant="primary")
+
         with gr.Column(scale=1):
             output_img = gr.Image(label="Your Professionally Staged Room")
-            skeleton_out = gr.Image(label="Detected Room Outlines")
+            skeleton_out = gr.Image(label="Detected Room Structure")
 
     btn.click(
         fn=ai_interior_designer,

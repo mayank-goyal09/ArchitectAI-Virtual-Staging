@@ -8,21 +8,14 @@ sdk_version: 5.15.0
 app_file: app/gradio_app.py
 pinned: false
 license: mit
-hardware: zero-a10g
 ---
 
 # AI-Virtual-Stager 🏡
 
-A tool to transform empty room photos into virtual staged interiors using Stable Diffusion and ControlNet.
+Transform empty room photos into virtual staged interiors using AI.
 
-**Powered by ZeroGPU** — runs Stable Diffusion on NVIDIA A10G for free!
+Uses the **HF Inference API** to run Stable Diffusion on HF's servers — works on free CPU-basic hardware!
 
-## Project Structure
-- `data/`: Raw and processed room photos.
-- `models/`: ControlNet weights.
-- `src/`: Core logic for image processing and generation.
-- `app/`: Gradio interface powered by ZeroGPU.
-
-## Quick Start
-1. Install dependencies: `pip install -r requirements.txt`
-2. Run the app: `python app/gradio_app.py`
+## Setup
+1. Add your `HF_TOKEN` in Space Settings → Variables & Secrets
+2. The app will use the Inference API to generate staged rooms
