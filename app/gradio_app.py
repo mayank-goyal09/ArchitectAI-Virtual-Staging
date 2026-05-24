@@ -8,7 +8,7 @@ import io
 
 # === HF Inference API Client ===
 # Uses HF's free serverless GPU infrastructure — no local GPU needed!
-HF_TOKEN = os.environ.get("HF_TOKEN", None)
+HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN") or None
 client = InferenceClient(token=HF_TOKEN)
 
 print("✅ Connected to Hugging Face Inference API!")
@@ -50,8 +50,13 @@ def ai_interior_designer(input_img, custom_prompt, creativity_level, style_stren
     # 3. Call HF Inference API — image-to-image using instruct-pix2pix
     # This model takes an image + instruction and modifies it (perfect for staging!)
     try:
+        # Convert PIL.Image to JPEG bytes for robust API transmission
+        buffer = io.BytesIO()
+        original.save(buffer, format="JPEG")
+        image_bytes = buffer.getvalue()
+
         result_image = client.image_to_image(
-            image=original,
+            image=image_bytes,
             prompt=full_prompt,
             model="timbrooks/instruct-pix2pix",
             guidance_scale=10.0,
@@ -106,4 +111,4 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
-    demo.launch(server_name="0.0.0.0", server_port=port, share=False)
+    demo.launch(server_name="0.0.0.0", server_port=port, share=False, ssr_mode=False)
