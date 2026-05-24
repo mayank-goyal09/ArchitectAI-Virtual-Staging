@@ -1,5 +1,4 @@
 import os
-import sys
 import cv2
 import torch
 import numpy as np
@@ -7,143 +6,105 @@ import gradio as gr
 from PIL import Image
 from diffusers import StableDiffusionControlNetInpaintPipeline, ControlNetModel, DPMSolverMultistepScheduler
 
-# === Hugging Face ZeroGPU Support ===
-# ZeroGPU dynamically assigns a GPU ONLY when a @spaces.GPU function is called.
-# At module level, PyTorch CUDA is *emulated*, so .to("cuda") works without a real GPU.
+# === ZeroGPU Support ===
 try:
     import spaces
     ZERO_GPU = True
-    print("✨ Hugging Face ZeroGPU environment detected!")
+    print("✨ ZeroGPU environment detected!")
 except ImportError:
     ZERO_GPU = False
-    print("💻 Local environment detected. Using local hardware.")
+    print("💻 Local environment detected.")
     class spaces:
         @staticmethod
         def GPU(func):
             return func
 
-
-# === 1. MODEL LOADING AT MODULE LEVEL ===
-# ZeroGPU best practice: load models at module level with float16 + "cuda".
-# The CUDA emulation layer handles this during startup without needing a real GPU.
-# The real GPU is only assigned when a @spaces.GPU decorated function is called.
-device = "cuda" if (ZERO_GPU or torch.cuda.is_available()) else "cpu"
-torch_dtype = torch.float16 if device == "cuda" else torch.float32
-
-print(f"🔧 Target device: {device}, dtype: {torch_dtype}")
-
-print("📦 Loading ControlNet Canny Model...")
+# === LOAD MODELS ON CPU (works everywhere) ===
+# Models are loaded in float16 on CPU. They get moved to GPU inside @spaces.GPU.
+print("📦 Loading ControlNet...")
 controlnet = ControlNetModel.from_pretrained(
     "lllyasviel/sd-controlnet-canny",
-    torch_dtype=torch_dtype
+    torch_dtype=torch.float16
 )
 
-print("📦 Loading Stable Diffusion Inpaint Pipeline...")
+print("📦 Loading Stable Diffusion Pipeline...")
 pipe = StableDiffusionControlNetInpaintPipeline.from_pretrained(
     "runwayml/stable-diffusion-v1-5",
     controlnet=controlnet,
-    torch_dtype=torch_dtype
-).to(device)
-
+    torch_dtype=torch.float16
+)
 pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
-
-# Memory optimization — critical for staying within ZeroGPU VRAM limits
 pipe.enable_attention_slicing()
 
-print("✅ All models loaded and ready!")
+# Only move to CUDA if a real GPU exists (not ZeroGPU — that happens inside @spaces.GPU)
+if not ZERO_GPU and torch.cuda.is_available():
+    pipe = pipe.to("cuda")
+    print("🚀 Moved pipeline to local GPU.")
+else:
+    print("✅ Models loaded on CPU. Will use GPU inside @spaces.GPU calls.")
 
 
-# === 2. CORE IMAGE PROCESSING FUNCTIONS ===
-def get_canny_skeleton_from_pil(pil_image):
-    """
-    Directly processes a PIL Image using the perfected high-contrast logic.
-    No need to save to disk!
-    """
-    # Convert PIL Image to OpenCV BGR format
+# === IMAGE PROCESSING ===
+def get_canny_skeleton(pil_image):
     img_np = np.array(pil_image)
-    if len(img_np.shape) == 2:  # Grayscale check
+    if len(img_np.shape) == 2:
         img_np = cv2.cvtColor(img_np, cv2.COLOR_GRAY2BGR)
-    elif img_np.shape[2] == 4:  # RGBA check
+    elif img_np.shape[2] == 4:
         img_np = cv2.cvtColor(img_np, cv2.COLOR_RGBA2BGR)
     else:
         img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-
-    # 1. Convert to grayscale and equalize histogram
-    gray = cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY)
-    gray = cv2.equalizeHist(gray)
-
-    # 2. Reduce noise
+    gray = cv2.equalizeHist(cv2.cvtColor(img_np, cv2.COLOR_BGR2GRAY))
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    # 3. Canny edge detection
     edges = cv2.Canny(blurred, 30, 100)
-
-    # 4. Thicken edges for the AI to see better
-    kernel = np.ones((3, 3), np.uint8)
-    dilated_edges = cv2.dilate(edges, kernel, iterations=1)
-
-    # Convert back to PIL RGB Image
-    return Image.fromarray(cv2.cvtColor(dilated_edges, cv2.COLOR_GRAY2RGB))
+    dilated = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
+    return Image.fromarray(cv2.cvtColor(dilated, cv2.COLOR_GRAY2RGB))
 
 
-def create_floor_mask(image_shape):
-    """
-    Creates a binary floor mask focusing the AI staging on the bottom 50% of the room.
-    """
-    height, width = image_shape[:2]
-    mask = np.zeros((height, width), dtype=np.uint8)
-    mask[int(height * 0.5):, :] = 255
+def create_floor_mask(shape):
+    h, w = shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint8)
+    mask[int(h * 0.5):, :] = 255
     return Image.fromarray(mask)
 
 
-# === 3. GRADIO INFERENCE HANDLER ===
+# === INFERENCE (GPU requested here) ===
 @spaces.GPU
 def ai_interior_designer(input_img, custom_prompt, creativity_level, style_strength):
     if input_img is None:
-        raise gr.Error("Please upload an image of your empty room first!")
-
+        raise gr.Error("Please upload an image first!")
     if not custom_prompt or not custom_prompt.strip():
-        raise gr.Error("Please describe your design vision in the text box!")
+        raise gr.Error("Please describe your design vision!")
 
-    # Resize input image to standard size for generation (512x512)
-    original_resized = input_img.convert("RGB").resize((512, 512))
+    # Move pipeline to GPU at inference time (ZeroGPU gives us a real GPU here)
+    pipe.to("cuda" if torch.cuda.is_available() else "cpu")
 
-    # 1. Get high-contrast line structure map
-    skeleton_img = get_canny_skeleton_from_pil(original_resized)
+    original = input_img.convert("RGB").resize((512, 512))
+    skeleton = get_canny_skeleton(original)
+    mask = create_floor_mask(np.array(original).shape)
+    prompt = f"{custom_prompt}, professional interior design, highly detailed, 8k, photorealistic"
 
-    # 2. Create the floor mask
-    mask_img = create_floor_mask(np.array(original_resized).shape)
-
-    # 3. Combine custom prompt with design terms
-    full_prompt = f"{custom_prompt}, professional interior design, highly detailed, 8k, photorealistic"
-
-    print(f"🎨 Designing room with prompt: '{full_prompt}'...")
-
-    # 4. Generate the staged room
+    print(f"🎨 Generating: '{prompt}'...")
     result = pipe(
-        prompt=full_prompt,
-        image=original_resized,
-        mask_image=mask_img,
-        control_image=skeleton_img,
+        prompt=prompt,
+        image=original,
+        mask_image=mask,
+        control_image=skeleton,
         num_inference_steps=25,
         controlnet_conditioning_scale=style_strength,
         strength=creativity_level,
         guidance_scale=10.0
     ).images[0]
 
-    print("✅ Room design complete!")
-    return result, skeleton_img
+    print("✅ Done!")
+    return result, skeleton
 
 
-# === 4. BUILD GRADIO INTERFACE ===
+# === GRADIO UI ===
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
     gr.Markdown("""
-    # 🏗️ AI Virtual Interior Designer (Production Engine)
-    Transform empty rooms into professionally staged spaces using Stable Diffusion and ControlNet.
-    
-    **Powered by ZeroGPU** — runs on NVIDIA A100 for free!
+    # 🏗️ AI Virtual Interior Designer
+    Transform empty rooms into professionally staged spaces using Stable Diffusion + ControlNet.
     """)
-
     with gr.Row():
         with gr.Column(scale=1):
             input_img = gr.Image(type="pil", label="Upload Your Empty Room")
@@ -151,30 +112,20 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 placeholder="e.g., A minimalist Scandinavian living room with light wood furniture",
                 label="Describe Your Vision"
             )
-
-            with gr.Accordion("Advanced Designer Settings", open=False):
-                creativity = gr.Slider(0.1, 1.0, value=0.8, label="Creativity (How much to change the floor?)")
-                strictness = gr.Slider(0.1, 1.0, value=0.6, label="Structural Strictness (Follow wall outlines?)")
-
+            with gr.Accordion("Advanced Settings", open=False):
+                creativity = gr.Slider(0.1, 1.0, value=0.8, label="Creativity")
+                strictness = gr.Slider(0.1, 1.0, value=0.6, label="Structural Strictness")
             btn = gr.Button("🎨 Design My Room", variant="primary")
-
         with gr.Column(scale=1):
             output_img = gr.Image(label="Your Professionally Staged Room")
             skeleton_out = gr.Image(label="Detected Room Outlines")
 
-    # Hook the button click to the designer logic
     btn.click(
         fn=ai_interior_designer,
         inputs=[input_img, prompt, creativity, strictness],
         outputs=[output_img, skeleton_out]
     )
 
-# === 5. RUN THE SERVER ===
 if __name__ == "__main__":
-    # Get port from environment variable or default to 7860
     port = int(os.environ.get("PORT", 7860))
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=port,
-        share=False
-    )
+    demo.launch(server_name="0.0.0.0", server_port=port, share=False)
