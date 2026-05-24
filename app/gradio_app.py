@@ -9,7 +9,7 @@ import io
 # === HF Inference API Client ===
 # Uses HF's free serverless GPU infrastructure — no local GPU needed!
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN") or None
-client = InferenceClient(token=HF_TOKEN)
+client = InferenceClient(token=HF_TOKEN, provider="hf-inference")
 
 print("✅ Connected to Hugging Face Inference API!")
 
@@ -58,9 +58,7 @@ def ai_interior_designer(input_img, custom_prompt, creativity_level, style_stren
         result_image = client.image_to_image(
             image=image_bytes,
             prompt=full_prompt,
-            model="timbrooks/instruct-pix2pix",
-            guidance_scale=10.0,
-            image_guidance_scale=float(style_strength) * 2.5,
+            model="Qwen/Qwen-Image-Edit-2511",
         )
         print("✅ Room design complete!")
         return result_image, skeleton
