@@ -42,67 +42,87 @@ print("✅ Connected to Hugging Face Inference API!")
 
 
 def call_hf_api_direct(image_bytes, prompt, model_id, token):
-    """Direct HTTP POST request to Hugging Face Inference API, bypassing huggingface_hub client-side bugs."""
-    url = f"https://api-inference.huggingface.co/models/{model_id}"
+    """Direct HTTP POST request to Hugging Face Inference API, with multiple DNS endpoint fallbacks."""
+    # List of endpoints to bypass local ISP/DNS blocks
+    endpoints = [
+        f"https://api-inference.huggingface.co/models/{model_id}",
+        f"https://api.huggingface.co/models/{model_id}",
+        f"https://huggingface.co/api/models/{model_id}"
+    ]
+    
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
         
-    print(f"🌐 Direct API call to: {url}")
+    last_err = None
     
-    # Try Format 1: Standard JSON payload with base64 encoded image
-    try:
-        encoded_image = base64.b64encode(image_bytes).decode("utf-8")
-        payload = {
-            "inputs": encoded_image,
-            "parameters": {
-                "prompt": prompt,
+    for url in endpoints:
+        print(f"🌐 Direct API call to: {url}")
+        
+        # Try Format 1: Standard JSON payload with base64 encoded image
+        try:
+            encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+            payload = {
+                "inputs": encoded_image,
+                "parameters": {
+                    "prompt": prompt,
+                }
             }
-        }
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
-        if response.status_code == 200 and len(response.content) > 100:
-            return Image.open(io.BytesIO(response.content))
-        else:
-            print(f"Format 1 failed with status {response.status_code}: {response.text[:200]}")
-    except Exception as e:
-        print(f"Format 1 exception: {e}")
+            response = requests.post(url, headers=headers, json=payload, timeout=15)
+            if response.status_code == 200 and len(response.content) > 100:
+                return Image.open(io.BytesIO(response.content))
+            else:
+                print(f"Format 1 failed on {url} with status {response.status_code}: {response.text[:200]}")
+                if response.status_code == 503:
+                    raise Exception(f"Model loading on {url}")
+        except Exception as e:
+            print(f"Format 1 exception on {url}: {e}")
+            last_err = e
+            if "nameresolutionerror" not in str(e).lower() and "failed to resolve" not in str(e).lower() and "no address associated" not in str(e).lower():
+                pass
+            else:
+                # Skip to next endpoint immediately on DNS failures
+                continue
 
-    # Try Format 2: Raw binary image bytes as body, prompt in parameters query param
-    try:
-        response = requests.post(
-            url,
-            headers={**headers, "Content-Type": "image/jpeg"},
-            params={"prompt": prompt},
-            data=image_bytes,
-            timeout=15
-        )
-        if response.status_code == 200 and len(response.content) > 100:
-            return Image.open(io.BytesIO(response.content))
-        else:
-            print(f"Format 2 failed with status {response.status_code}: {response.text[:200]}")
-    except Exception as e:
-        print(f"Format 2 exception: {e}")
+        # Try Format 2: Raw binary image bytes as body, prompt in parameters query param
+        try:
+            response = requests.post(
+                url,
+                headers={**headers, "Content-Type": "image/jpeg"},
+                params={"prompt": prompt},
+                data=image_bytes,
+                timeout=15
+            )
+            if response.status_code == 200 and len(response.content) > 100:
+                return Image.open(io.BytesIO(response.content))
+            else:
+                print(f"Format 2 failed on {url} with status {response.status_code}: {response.text[:200]}")
+        except Exception as e:
+            print(f"Format 2 exception on {url}: {e}")
+            last_err = e
 
-    # Try Format 3: Multipart form data
-    try:
-        response = requests.post(
-            url,
-            headers=headers,
-            files={"image": ("image.jpg", image_bytes, "image/jpeg")},
-            data={"prompt": prompt},
-            timeout=15
-        )
-        if response.status_code == 200 and len(response.content) > 100:
-            return Image.open(io.BytesIO(response.content))
-        else:
-            print(f"Format 3 failed with status {response.status_code}: {response.text[:200]}")
-            if response.status_code != 200:
-                raise Exception(f"HF API returned status {response.status_code}: {response.text[:200]}")
-    except Exception as e:
-        print(f"Format 3 exception: {e}")
-        raise e
+        # Try Format 3: Multipart form data
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                files={"image": ("image.jpg", image_bytes, "image/jpeg")},
+                data={"prompt": prompt},
+                timeout=15
+            )
+            if response.status_code == 200 and len(response.content) > 100:
+                return Image.open(io.BytesIO(response.content))
+            else:
+                print(f"Format 3 failed on {url} with status {response.status_code}: {response.text[:200]}")
+                if response.status_code != 200:
+                    raise Exception(f"HF API returned status {response.status_code}: {response.text[:200]}")
+        except Exception as e:
+            print(f"Format 3 exception on {url}: {e}")
+            last_err = e
 
-    raise Exception("All direct HF API transmission formats failed.")
+    if last_err:
+        raise last_err
+    raise Exception("All direct HF API transmission formats and endpoints failed.")
 # === IMAGE PROCESSING (runs locally on CPU — lightweight) ===
 def get_canny_skeleton(pil_image):
     """Extract structural edges from the room image."""
