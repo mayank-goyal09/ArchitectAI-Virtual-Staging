@@ -37,7 +37,7 @@ else:
     print("⚠️ No Hugging Face Token found. Requests may be rate-limited or fail.")
 
 # Initialize the InferenceClient (without provider="hf-inference" to avoid strict validation where possible)
-client = InferenceClient(token=HF_TOKEN)
+client = InferenceClient(token=HF_TOKEN, timeout=15)
 print("✅ Connected to Hugging Face Inference API!")
 
 
@@ -59,7 +59,7 @@ def call_hf_api_direct(image_bytes, prompt, model_id, token):
                 "prompt": prompt,
             }
         }
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
         if response.status_code == 200 and len(response.content) > 100:
             return Image.open(io.BytesIO(response.content))
         else:
@@ -74,7 +74,7 @@ def call_hf_api_direct(image_bytes, prompt, model_id, token):
             headers={**headers, "Content-Type": "image/jpeg"},
             params={"prompt": prompt},
             data=image_bytes,
-            timeout=30
+            timeout=15
         )
         if response.status_code == 200 and len(response.content) > 100:
             return Image.open(io.BytesIO(response.content))
@@ -90,7 +90,7 @@ def call_hf_api_direct(image_bytes, prompt, model_id, token):
             headers=headers,
             files={"image": ("image.jpg", image_bytes, "image/jpeg")},
             data={"prompt": prompt},
-            timeout=30
+            timeout=15
         )
         if response.status_code == 200 and len(response.content) > 100:
             return Image.open(io.BytesIO(response.content))
@@ -152,6 +152,7 @@ def ai_interior_designer(input_img, custom_prompt, creativity_level, style_stren
             image=image_bytes,
             prompt=full_prompt,
             model=model_to_use,
+            timeout=15,
         )
         print("✅ Room design complete (high-level client)!")
         return result_image, skeleton
@@ -178,6 +179,7 @@ def ai_interior_designer(input_img, custom_prompt, creativity_level, style_stren
                         image=image_bytes,
                         prompt=full_prompt,
                         model=fallback_model,
+                        timeout=15,
                     )
                     print("✅ Room design complete (fallback via high-level client)!")
                     return result_image, skeleton
