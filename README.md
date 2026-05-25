@@ -26,6 +26,7 @@ license: mit
 
 [![🚀 Live Space Demo](https://img.shields.io/badge/🚀_LIVE_DEMO-Hugging_Face_Space-blue?style=for-the-badge&labelColor=0c1445)](https://huggingface.co/spaces/mayankg09/ArchitectAI-Virtual-Staging)
 [![GitHub Repository](https://img.shields.io/badge/💻_GITHUB_REPO-ArchitectAI-purple?style=for-the-badge&labelColor=1a0033)](https://github.com/mayank-goyal09/ArchitectAI-Virtual-Staging)
+[![Google Colab](https://img.shields.io/badge/⚡_GOOGLE_COLAB-Staging_Notebook-orange?style=for-the-badge&labelColor=1d2a3a)](https://colab.research.google.com/drive/1pGzjvjvvigoH6GD9O4hNATOTNbHrZVFY?usp=sharing)
 
 <br/>
 
@@ -34,6 +35,24 @@ license: mit
 ### **From Local OpenCV Structural Contours → Generative AI Masterpieces** 🛋️🎨
 
 </div>
+
+## 📖 THE STAGING ODYSSEY: AN EMPTY ROOM'S REBIRTH
+
+Imagine walking into a newly listed property. The walls are cold, standard white. The floor is a wide, bare expanse of empty parquet. A potential home buyer stands in the doorway, trying to visualize a life here, but all they see is silence. They leave, uninspired. This is the **empty room dilemma**—a hurdle that stalls millions of real estate deals worldwide.
+
+Enter **ArchitectAI**. 
+
+With a single snapshot, the story changes. The user uploads the empty room photo. Locally on the CPU, OpenCV's computer vision algorithms spring to life, tracing the contours of the walls, matching the perspective lines, and creating a structural blueprint. 
+
+Then, the re-engineered serverless gateway takes over. Deep neural models interpret the buyer's instruction: *"Add warm Scandinavian furniture, light oak wood, and soft green indoor plants."* In a flash, virtual sofas, minimalist tables, and sunlit foliage drop precisely into place—respecting the room's geometry and lighting. Under 10 seconds, the cold empty space is reborn as a vibrant, inviting sanctuary.
+
+### 🧪 **The Prototyping Laboratory**
+
+Every great architectural feat starts in the workshop. The algorithms, multi-layered fallbacks, and rendering checkpoints of ArchitectAI were forged and vetted in a dedicated Google Colab Sandbox.
+
+[![Google Colab](https://img.shields.io/badge/Launch_Colab_Notebook-ArchitectAI_Sandbox-orange?style=for-the-badge&logo=googlecolab&logoColor=white)](https://colab.research.google.com/drive/1pGzjvjvvigoH6GD9O4hNATOTNbHrZVFY?usp=sharing)
+
+Explore the complete development environment, run experiments on raw image buffers, and trace the evolution of the virtual staging pipeline directly in the interactive playground!
 
 ---
 
