@@ -120,6 +120,36 @@ def get_canny_skeleton(pil_image):
     return Image.fromarray(cv2.cvtColor(dilated, cv2.COLOR_GRAY2RGB))
 
 
+def generate_offline_mockup(original_img, skeleton_img, prompt_text):
+    """Generates a beautiful local mock staged room when completely offline, so the app remains interactive."""
+    original_np = np.array(original_img)
+    skeleton_np = np.array(skeleton_img)
+    
+    # Create a neon indigo overlay from the Canny skeleton
+    neon_overlay = np.zeros_like(original_np)
+    
+    # Extract mask
+    if len(skeleton_np.shape) == 3:
+        mask = skeleton_np[:, :, 0] > 128
+    else:
+        mask = skeleton_np > 128
+        
+    neon_overlay[mask] = [79, 70, 229] # indigo [R=79, G=70, B=229]
+    
+    # Blend original and neon overlay
+    blended = cv2.addWeighted(original_np, 0.8, neon_overlay, 0.6, 0)
+    
+    # Draw a stylish banner overlay at the bottom saying 'OFFLINE DESIGN'
+    h, w, c = blended.shape
+    cv2.rectangle(blended, (0, h - 30), (w, h), (15, 23, 42), -1)
+    
+    # Put text
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(blended, "OFFLINE BLUEPRINT MODE - CHECK INTERNET", (10, h - 10), font, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+    
+    return Image.fromarray(blended)
+
+
 # === INFERENCE VIA HF API ===
 def ai_interior_designer(input_img, custom_prompt, creativity_level, style_strength):
     if input_img is None:
@@ -192,7 +222,13 @@ def ai_interior_designer(input_img, custom_prompt, creativity_level, style_stren
                 fallback_err_str = str(fallback_err)
                 print(f"❌ All attempts failed. Fallback error: {fallback_err_str}")
                 
-                # Format a user-friendly error message based on failure reason
+                # Check for network offline / DNS resolution failures
+                if "nameresolutionerror" in fallback_err_str.lower() or "gaierror" in fallback_err_str.lower() or "failed to resolve" in fallback_err_str.lower() or "connectionpool" in fallback_err_str.lower() or "no address associated" in fallback_err_str.lower():
+                    gr.Warning("🌐 Offline / DNS Error: Unable to connect to Hugging Face servers. Activating local Spatial Blueprint Mode!")
+                    mock_image = generate_offline_mockup(original, skeleton, custom_prompt)
+                    return mock_image, skeleton
+                
+                # Format a user-friendly error message based on other failure reasons
                 if "rate limit" in fallback_err_str.lower() or "429" in fallback_err_str:
                     raise gr.Error("⏳ Rate limit reached. Please wait 30 seconds and try again.")
                 elif "401" in fallback_err_str or "token" in fallback_err_str.lower() or "unauthorized" in fallback_err_str.lower():
